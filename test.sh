@@ -7,7 +7,9 @@ set -x
 set -e
 test "$ghcred" != "" -a "$ghorg" != "" 
 
-for target in teams repos allmembers ; do
+for target in teams teammembers repos allmembers ; do
+  echo "--$target--"
   ./github-walk -c "$ghcred" -o "$ghorg" -t "$target"
+  echo ""
 done
 

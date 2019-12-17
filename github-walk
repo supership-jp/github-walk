@@ -4,8 +4,8 @@
 #
 # - Get personal access token from https://github.com/settings/tokens
 # - execute this script
-#   github-walk.rb -c <token> -o [org name] -t [target]
-#	-c <token>
+#   github-walk -c <token> -o [org name] -t [target]
+#	-c <token>: Personal access token
 #
 
 require 'json'
@@ -140,7 +140,7 @@ Usage: #{$0} <-c cred|--cred=cred> <-o org|--org=org> <-t target|--taget=target
 
 
  - this script will get member,team list from Github to maintain Organization members.
- - to use this program, at first you should get personal access token from https://github.com/settings/tokens
+ - to use this program, at first you should get personal access token from https://github.com/settings/tokens . The token need scope read:org
 
 _END_
 end # showHelp
