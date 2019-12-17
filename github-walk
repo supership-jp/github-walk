@@ -1,0 +1,183 @@
+#!/usr/bin/env ruby
+
+# How to use
+#
+# - Get personal access token from https://github.com/settings/tokens
+# - execute this script
+#   github-walk.rb -c <token> -o [org name] -t [target]
+#	-c <token>
+#
+
+require 'json'
+require 'uri'
+require 'net/http'
+require 'open-uri'
+require 'csv'
+
+
+class GithubWalk
+  $max_pagenum = 50
+  attr_reader :colsTeams, :colsTeamMembers, :colsAllMembers, :colsRepos
+
+  def initialize(vars = {})
+     @GHAPI = vars[:ghapi] || "https://api.github.com"
+     @Credential = vars[:cred] || ENV['GHCRED'] # || raise "Credential is not defined"
+     @org = vars[:org] # || raise "Org is not defined"
+     if @Credential.nil? or @org.nil?
+       raise "credential or org is nil."
+     end
+     @colsTeams = %w(org name id slug description prvivacy url html_url repositories_url)
+     @colsTeamMembers = %w(org name login type site_admin)
+     @colsAllMembers = %w(org login type)
+     @colsRepos = %w(name full_name private archived updated_at description)
+
+  end
+
+  def getGhApiJson(ghpath)
+    getJson( @GHAPI + ghpath )
+  end
+
+  def getJson(url)
+    wholeResponse = []
+
+    $max_pagenum.times do
+      jsonres, linknext = getJsonEach(url)
+
+      if jsonres == false
+        return wholeResponse
+      end
+
+      if jsonres.class == Array
+        wholeResponse += jsonres
+      else
+        wholeResponse.push jsonres
+      end
+
+      if linknext.nil?
+        break
+      end
+      url = linknext
+    end
+
+    return wholeResponse
+  end
+
+
+  def getJsonEach(url)
+    uri = URI.parse(url)
+    req = Net::HTTP::Get.new(uri)
+    req.basic_auth("", @Credential)
+    res = Net::HTTP.start(uri.host, uri.port, :use_ssl => true) {|http|
+      STDERR.puts("Getting #{url}")
+      http.request(req)
+    }
+
+    return false, nil if !res.is_a?(Net::HTTPSuccess)
+
+    #res.each { |k,v|  STDERR.puts "#{k}: #{v}" }
+
+    links = Hash.new
+
+    if ! res[:link].nil?
+      res[:link].split(",").each do |part, index|
+        section = part.split(';')
+        url = section[0][/<(.*)>/,1]
+        name = section[1][/rel="(.*)"/,1].to_sym
+        links[name] = url
+      end
+    end
+
+    jsonres = JSON.parse(res.body)
+
+    return jsonres, links[:next]
+  end
+
+
+
+  def getTeams()
+    teamcols = @colsTeams[1 .. -1]
+    t = getGhApiJson("/orgs/#{@org}/teams")
+    [@colsTeams] + t.map{|r| [@org] +  teamcols.map{|c| r[c] }  }
+  end
+
+
+  def getTeamMembers()
+    tmc = @colsTeamMembers[2 .. -1]
+    res = [@colsTeamMembers]
+    getGhApiJson("/orgs/#{@org}/teams").each do |team|
+      mu = team['members_url'].sub(/\{\/member\}$/, "")
+      res += getJson(mu).map{|r| [@org, team['name']] + tmc.map{|c| r[c] } }
+    end
+    return res
+  end
+
+  def getAllMembers()
+    res = [@colsAllMembers]
+    res += getGhApiJson("/orgs/#{@org}/members").map{|r| [@org, r['login'], 'member']}
+    res += getGhApiJson("/orgs/#{@org}/outside_collaborators").map do |r|
+      [@org, r['login'], 'outside_collaborator']
+    end
+    return res
+  end
+
+  def getRepos()
+    # Doc: https://developer.github.com/v3/repos/#list-organization-repositories
+    cols = @colsRepos[1 .. -1]
+    [@colsRepos] + getGhApiJson("/orgs/#{@org}/repos").map{|r| cols.map{|c| r[c]} }
+  end
+end # class GithubWalk
+
+
+## main
+require 'optparse'
+
+def showHelp()
+  puts <<_END_
+Usage: #{$0} <-c cred|--cred=cred> <-o org|--org=org> <-t target|--taget=target
+  -c cred | --cred=cred	personal access token from github
+  -o org | --org=org	organizatoion name
+  -t target | --target=target	the api you call
+
+
+ - this script will get member,team list from Github to maintain Organization members.
+ - to use this program, at first you should get personal access token from https://github.com/settings/tokens
+
+_END_
+end # showHelp
+params = ARGV.getopts("ht:c:o:", "cred:", "org:", "target:")
+
+# setup params
+if params['h']
+  showHelp
+  exit
+end
+
+cred = params['cred'] || params['c']
+org = params['org'] || params['o']
+target = params['target'] || params['t']
+
+
+begin
+  ghw = GithubWalk.new(:cred => cred, :org => org)
+rescue RuntimeError => e
+  puts e.to_s
+  showHelp
+  exit 1
+end
+
+case target
+when 'teams'
+  res = ghw.getTeams()
+when 'teammembers'
+  res = ghw.getTeamMembers()
+when 'repos'
+  res = ghw.getRepos()
+when 'allmembers'
+  res = ghw.getAllMembers()
+else
+  puts "Target (#{target}) is blank or unknown."
+  exit 1
+end
+res.each do |row|
+  puts row.to_csv
+end
